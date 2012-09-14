@@ -1,18 +1,13 @@
 
 #define USB_MS_DATA_EP 1
-/*
-#define USB_MS_DATA_IN_EP 1
-#define USB_MS_DATA_OUT_EP 2*/
+
 #define USB_MS_EP_SIZE 64
 
 #define MSD_REQ_RESET		0xFF
 #define MSD_GET_MAX_LUN		0xFE
 #define MSD_CBW_SIGNATURE                               0x43425355
 #define MSD_CSW_SIGNATURE                               0x53425355
-/** Mask for a Command Block Wrapper's flags attribute to specify a command with data sent from host-to-device. */
 #define MSD_COMMAND_DIR_DATA_OUT                        (0 << 7)
-
-/** Mask for a Command Block Wrapper's flags attribute to specify a command with data sent from device-to-host. */
 #define MSD_COMMAND_DIR_DATA_IN                         (1 << 7)
 
 #define MSD_SETUP_WORD(setup, index) (uint16_t)(((uint16_t)setup[index+1] << 8) | (setup[index] & 0x00FF))
@@ -63,18 +58,6 @@
 #define SCSI_ASENSEQ_FORMAT_COMMAND_FAILED             0x01
 #define SCSI_ASENSEQ_INITIALIZING_COMMAND_REQUIRED     0x02
 #define SCSI_ASENSEQ_OPERATION_IN_PROGRESS             0x07
-
-typedef struct {
-  /**
-   * @brief   USB driver to use.
-   */
-  USBDriver                 *usbp;
-  /**
-   * @brief   USB driver configuration structure.
-   */
-  USBConfig                 usb_config;
-} USBMassStorageDeviceConfig;
-
 
 PACK_STRUCT_BEGIN typedef struct {
 	uint32_t signature;
