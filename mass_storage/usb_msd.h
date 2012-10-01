@@ -106,6 +106,7 @@ typedef enum { idle, read_cmd_block, send_csw, reading, writing} msd_state_t;
 
 struct USBMassStorageDriver {
 	USBDriver                 *usbp;
+	BinarySemaphore bsem;
 	BaseBlockDevice *bbdp;
 	BlockDeviceInfo block_dev_info;
 	msd_state_t state;
