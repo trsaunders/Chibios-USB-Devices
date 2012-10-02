@@ -26,6 +26,7 @@
 #define SCSI_CMD_VERIFY_10						0x2F
 #define SCSI_CMD_SEND_DIAGNOSTIC				0x1D
 #define SCSI_CMD_MODE_SENSE_6                   0x1A
+#define SCSI_CMD_START_STOP_UNIT				0x1B
 
 #define MSD_COMMAND_PASSED 0x00
 #define MSD_COMMAND_FAILED 0x01
@@ -100,14 +101,24 @@ PACK_STRUCT_BEGIN typedef struct {
 	uint32_t block_size;
 } PACK_STRUCT_STRUCT SCSIReadCapacity10Response_t PACK_STRUCT_END;
 
+PACK_STRUCT_BEGIN typedef struct {
+	uint8_t op_code;
+	uint8_t lun_immed;
+	uint8_t res1;
+	uint8_t res2;
+	uint8_t loej_start;
+	uint8_t control;
+} PACK_STRUCT_STRUCT SCSIStartStopUnitRequest_t;
+
 typedef struct USBMassStorageDriver USBMassStorageDriver;
 
-typedef enum { idle, read_cmd_block, send_csw, reading, writing} msd_state_t;
+typedef enum { idle, read_cmd_block, send_csw, reading, writing, ejected} msd_state_t;
 
 struct USBMassStorageDriver {
 	USBDriver                 *usbp;
 	BinarySemaphore bsem;
 	BaseBlockDevice *bbdp;
+	EventSource evt_connected, evt_ejected;
 	BlockDeviceInfo block_dev_info;
 	msd_state_t state;
 	msd_cbw_t cbw;
@@ -116,10 +127,13 @@ struct USBMassStorageDriver {
 	bool_t result;
 };
 
+#define MSD_CONNECTED			0
+#define MSD_EJECTED				1
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-void msdInit(USBDriver *usbp, BaseBlockDevice *bdp);
+void msdInit(USBDriver *usbp, BaseBlockDevice *bdp, USBMassStorageDriver *msdp);
 #ifdef __cplusplus
 }
 #endif

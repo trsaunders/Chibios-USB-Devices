@@ -30,10 +30,6 @@ inline uint32_t swap_uint32( uint32_t val ) {
 /*===========================================================================*/
 
 /*
- * USB Driver structure.
- */
-static USBMassStorageDriver UMSD1;
-/*
  * USB Device Descriptor.
  */
 static const uint8_t msd_device_descriptor_data[18] = {
@@ -270,12 +266,13 @@ static void usb_event(USBDriver *usbp, usbevent_t event) {
   case USB_EVENT_CONFIGURED:
     chSysLockFromIsr();
     usbInitEndpointI(usbp, USB_MS_DATA_EP, &epDataConfig);
-    chSysUnlockFromIsr();
+	/* initialise the thread */
+	chBSemSignalI(&msdp->bsem);
 
-    /* initialise the thread */
-	chSysLockFromIsr();
-	chBSemSignalI(&UMSD1.bsem);
+	/* signal that the device is connected */
+	chEvtBroadcastI(&msdp->evt_connected);
 	chSysUnlockFromIsr();
+
     return;
   case USB_EVENT_SUSPEND:
     return;
@@ -502,6 +499,22 @@ bool_t SCSICommandStartReadWrite10(USBMassStorageDriver *msdp) {
 	return FALSE;
 }
 
+bool_t SCSICommandStartStopUnit(USBMassStorageDriver *msdp) {
+	SCSIStartStopUnitRequest_t *ssu = (SCSIStartStopUnitRequest_t *)&(msdp->cbw.scsi_cmd_data);
+
+	if((ssu->loej_start & 0b00000011) == 0b00000010) {
+		/* device has been ejected */
+		chEvtBroadcast(&msdp->evt_ejected);
+
+		msdp->state = ejected;
+	}
+
+	msdp->result = TRUE;
+
+	/* wait for ISR */
+	return TRUE;
+}
+
 bool_t SCSICommandModeSense6(USBMassStorageDriver *msdp) {
 	/* Send an empty header response with the Write Protect flag status */
 	/* TODO set byte3 to 0x80 if disk is read only */
@@ -583,6 +596,9 @@ bool_t msdReadCommandBlock(USBMassStorageDriver *msdp) {
 		break;
 	case SCSI_CMD_MODE_SENSE_6:
 		sleep = SCSICommandModeSense6(msdp);
+		break;
+	case SCSI_CMD_START_STOP_UNIT:
+		sleep = SCSICommandStartStopUnit(msdp);
 		break;
 	default:
 		SCSISetSense(	msdp,
@@ -679,6 +695,11 @@ static msg_t MassStorageThd(void *arg) {
 		case send_csw:
 			wait_for_isr = msdSendCSW(msdp);
 			break;
+		case ejected:
+			/* disconnect usb device */
+			usbDisconnectBus(msdp->usbp);
+			chThdExit(0);
+			return 0;
 		}
 
 		if(!wait_for_isr)
@@ -690,21 +711,24 @@ static msg_t MassStorageThd(void *arg) {
 	return 0;
 }
 
-void msdInit(USBDriver *usbp, BaseBlockDevice *bbdp) {
+void msdInit(USBDriver *usbp, BaseBlockDevice *bbdp, USBMassStorageDriver *msdp) {
 	uint8_t i;
-	UMSD1.usbp = usbp;
-	UMSD1.state = idle;
-	UMSD1.bbdp = bbdp;
+	msdp->usbp = usbp;
+	msdp->state = idle;
+	msdp->bbdp = bbdp;
+
+	chEvtInit(&msdp->evt_connected);
+	chEvtInit(&msdp->evt_ejected);
 
 	/* initialise binary semaphore as taken */
-	chBSemInit(&UMSD1.bsem, TRUE);
+	chBSemInit(&msdp->bsem, TRUE);
 
 	/* initialise sense values to zero */
 	for(i = 0; i < sizeof(scsi_sense_response_t); i++)
-		UMSD1.sense.byte[i] = 0x00;
+		msdp->sense.byte[i] = 0x00;
 	/* Response code = 0x70, additional sense length = 0x0A */
-	UMSD1.sense.byte[0] = 0x70;
-	UMSD1.sense.byte[7] = 0x0A;
+	msdp->sense.byte[0] = 0x70;
+	msdp->sense.byte[7] = 0x0A;
 
 	/* make sure block device is working and get info */
 	while(TRUE) {
@@ -715,14 +739,17 @@ void msdInit(USBDriver *usbp, BaseBlockDevice *bbdp) {
 		chThdSleepMilliseconds(50);
 	}
 
-	blkGetInfo(bbdp, &UMSD1.block_dev_info);
+	blkGetInfo(bbdp, &msdp->block_dev_info);
 
-	usbDisconnectBus(UMSD1.usbp);
+	usbDisconnectBus(usbp);
 	chThdSleepMilliseconds(1000);
-	UMSD1.usbp->param = &UMSD1;
+	usbp->param = (void *)msdp;
 
-	usbStart(UMSD1.usbp, &msd_usb_config);
-	usbConnectBus(UMSD1.usbp);
+	usbStart(usbp, &msd_usb_config);
+	usbConnectBus(usbp);
 
-	msdThd = chThdCreateStatic(waMassStorage, sizeof(waMassStorage), NORMALPRIO, MassStorageThd, &UMSD1);
+	if(msdThd == NULL) {
+		msdThd = chThdCreateStatic(waMassStorage, sizeof(waMassStorage),
+				NORMALPRIO, MassStorageThd, msdp);
+	}
 }
