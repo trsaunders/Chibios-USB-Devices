@@ -6,11 +6,14 @@ This driver implements a USB mass storage device. It requires a Chibios block de
 Example usage:
 --------------
 ```c
+
+USBMassStorageDriver UMSD1;
+
 mmcObjectInit(&MMCD1);
 mmcStart(&MMCD1, &mmccfg);
 mmcConnect(&MMCD1);
 
-msdInit(&USBD1, &MMCD1);
+msdInit(&USBD1, &MMCD1, &UMSD1);
 ```
 
 Events:
