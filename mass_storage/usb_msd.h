@@ -112,7 +112,7 @@ PACK_STRUCT_BEGIN typedef struct {
 
 typedef struct USBMassStorageDriver USBMassStorageDriver;
 
-typedef enum { idle, read_cmd_block, send_csw, reading, writing, ejected} msd_state_t;
+typedef enum { idle, read_cmd_block, ejected} msd_state_t;
 
 struct USBMassStorageDriver {
 	USBDriver                 *usbp;

@@ -423,10 +423,7 @@ bool_t SCSICommandStartReadWrite10(USBMassStorageDriver *msdp) {
 		return FALSE;
 	}
 
-	/* set state according to read / write */
-	msdp->state = (cbw->scsi_cmd_data[0] == SCSI_CMD_WRITE_10) ? writing : reading;
-
-	if(msdp->state == writing) {
+	if(cbw->scsi_cmd_data[0] == SCSI_CMD_WRITE_10) {
 		/* get the first packet */
 		usbPrepareReceive(msdp->usbp, USB_MS_DATA_EP, rw_buf[i % 2],
 			msdp->block_dev_info.blk_size);
@@ -511,8 +508,8 @@ bool_t SCSICommandStartStopUnit(USBMassStorageDriver *msdp) {
 
 	msdp->result = TRUE;
 
-	/* wait for ISR */
-	return TRUE;
+	/* don't wait for ISR */
+	return FALSE;
 }
 
 bool_t SCSICommandModeSense6(USBMassStorageDriver *msdp) {
@@ -551,6 +548,9 @@ bool_t msdWaitForCommandBlock(USBMassStorageDriver *msdp) {
 /* A command block has been received */
 bool_t msdReadCommandBlock(USBMassStorageDriver *msdp) {
 	msd_cbw_t *cbw = &(msdp->cbw);
+
+	/* by default transition back to the idle state */
+	msdp->state = idle;
 
 	/* check the command */
 	if((cbw->signature != MSD_CBW_SIGNATURE) ||
@@ -611,13 +611,11 @@ bool_t msdReadCommandBlock(USBMassStorageDriver *msdp) {
 		usbStallTransmitI(msdp->usbp, USB_MS_DATA_EP);
 		chSysUnlockFromIsr();
 
-		msdp->state = idle;
 		cbw->data_len = 0;
 		return FALSE;
 	}
 
 	cbw->data_len = 0;
-	msdp->state = send_csw;
 
 	if(msdp->result) {
 		/* update sense with success status */
@@ -631,20 +629,15 @@ bool_t msdReadCommandBlock(USBMassStorageDriver *msdp) {
 		usbStallTransmitI(msdp->usbp, USB_MS_DATA_EP);
 		chSysUnlockFromIsr();
 
-		msdp->state = idle;
 		cbw->data_len = 0;
 		return FALSE;
 	}
 
-	return sleep;
-}
+	if(sleep) {
+		WaitForISR(msdp);
+	}
 
-bool_t msdSendCSW(USBMassStorageDriver *msdp) {
-	msd_cbw_t *cbw = &(msdp->cbw);
 	msd_csw_t *csw = &(msdp->csw);
-
-	/* transition to idle state - waiting for a command block */
-	msdp->state = idle;
 
 	if(!msdp->result && cbw->data_len) {
 		/* still bytes left to send, this is too early to send CSW? */
@@ -653,7 +646,7 @@ bool_t msdSendCSW(USBMassStorageDriver *msdp) {
 		usbStallTransmitI(msdp->usbp, USB_MS_DATA_EP);
 		chSysUnlockFromIsr();
 
-		return TRUE;
+		return FALSE;
 	}
 
 	csw->status = (msdp->result) ? MSD_COMMAND_PASSED : MSD_COMMAND_FAILED;
@@ -668,6 +661,7 @@ bool_t msdSendCSW(USBMassStorageDriver *msdp) {
 	usbStartTransmitI(msdp->usbp, USB_MS_DATA_EP);
 	chSysUnlock();
 
+	/* wait on ISR */
 	return TRUE;
 }
 
@@ -692,22 +686,20 @@ static msg_t MassStorageThd(void *arg) {
 		case read_cmd_block:
 			wait_for_isr = msdReadCommandBlock(msdp);
 			break;
-		case send_csw:
-			wait_for_isr = msdSendCSW(msdp);
-			break;
 		case ejected:
 			/* disconnect usb device */
+			palClearPad(RECORD_LED_PORT, RECORD_LED);
 			usbDisconnectBus(msdp->usbp);
+			usbStop(msdp->usbp);
 			chThdExit(0);
 			return 0;
 		}
 
-		if(!wait_for_isr)
-			continue;
-
 		/* wait until the ISR wakes thread */
-		WaitForISR(msdp);
+		if(wait_for_isr)
+			WaitForISR(msdp);
 	}
+
 	return 0;
 }
 
@@ -726,6 +718,7 @@ void msdInit(USBDriver *usbp, BaseBlockDevice *bbdp, USBMassStorageDriver *msdp)
 	/* initialise sense values to zero */
 	for(i = 0; i < sizeof(scsi_sense_response_t); i++)
 		msdp->sense.byte[i] = 0x00;
+
 	/* Response code = 0x70, additional sense length = 0x0A */
 	msdp->sense.byte[0] = 0x70;
 	msdp->sense.byte[7] = 0x0A;
