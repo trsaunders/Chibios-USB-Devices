@@ -688,7 +688,6 @@ static msg_t MassStorageThd(void *arg) {
 			break;
 		case ejected:
 			/* disconnect usb device */
-			palClearPad(RECORD_LED_PORT, RECORD_LED);
 			usbDisconnectBus(msdp->usbp);
 			usbStop(msdp->usbp);
 			chThdExit(0);
